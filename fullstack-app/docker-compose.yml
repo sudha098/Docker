@@ -1,57 +1,23 @@
-# docker-compose.yml - Full-stack web app
 version: '3.8'
 
 services:
-  # Traefik Reverse Proxy (Production-ready ingress)
-  traefik:
-    image: traefik:v3.0
-    command:
-      - "--api.insecure=true"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-    ports:
-      - "80:80"
-      - "443:443"
-      - "8080:8080"  # Dashboard
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - traefik-certs:/letsencrypt
-    networks:
-      - app-network
-    labels:
-      - "traefik.enable=true"
-
-  # Node.js/Express App Server
   app:
-    build: 
-      context: ./app
-      dockerfile: Dockerfile
+    build: ./app
+    ports:
+      - "3000:3000"  # Direct access - http://localhost:3000
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://postgres:password@db:5432/webapp
+      - DATABASE_URL=postgresql://postgres:password@db:5432/webapp?sslmode=disable
       - REDIS_URL=redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - app-logs:/app/logs
-    depends_on:
-      - db
-      - redis
-    networks:
-      - app-network
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.app.rule=Host(`localhost`)"
-      - "traefik.http.routers.app.entrypoints=web"
-      - "traefik.http.services.app.loadbalancer.server.port=3000"
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 256M
+    restart: unless-stopped
 
-  # PostgreSQL Database
   db:
     image: postgres:16-alpine
     environment:
@@ -61,38 +27,26 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    networks:
-      - app-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 1G
+    restart: unless-stopped
 
-  # Redis Cache/Session Store
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes
     volumes:
       - redis-data:/data
-    networks:
-      - app-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
 volumes:
   db-data:
   redis-data:
   app-logs:
-  traefik-certs:
-
-networks:
-  app-network:
-    driver: bridge
